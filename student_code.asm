@@ -1,7 +1,7 @@
 # ============================================================
 # Mission Ares IV — Student Scaffold
-# Name
-# ID
+# Name Omer Gutman
+# ID 214289209
 # ============================================================
 
 # --- MMIO Addresses -----------------------------------------
@@ -20,9 +20,9 @@
 
 # --- Data section -------------------------------------------
 .data
-o2_buf    .byte 08
-buf_idx   .word 0
-buf_count .word 0
+o2_buf:    .byte 0:8          # 8-byte circular buffer
+buf_idx:   .word 0
+buf_count: .word 0
 
 # --- Text section -------------------------------------------
 .text
