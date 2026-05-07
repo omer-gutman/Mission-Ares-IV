@@ -46,11 +46,31 @@ print_status
 # push_o2_sample
 # Input  $a0 = new O2 byte
 # Output none
-# Description TODO
+# Description maintains a circular biffer of the last 8 oxygen readings
 # ------------------------------------------------------------
-push_o2_sample
-    # TODO
-    jr $ra
+push_o2_sample:
+    # store the new sample
+    la    $t0, buf_idx
+    lw    $t1, 0($t0)              # get current index (0,1,..,7) from memmory
+
+    la    $t2, o2_buf              # get the base starting address of our array
+    add   $t3, $t2, $t1            # base address + index = exact target address
+    sb    $a0, 0($t3)              # save the sensor reading ($a0) into main memmory at target
+
+    # advancing the index
+    addi  $t1, $t1, 1              # advance our current index
+    andi  $t1, $t1, 0x07           # bitwise AND immediate, if the index reaches 8 we want to wrap back to 0. 1000 AND 0111 = 0000
+    sw    $t1, 0($t0)              # update the current index to buf_idx spot in main memmory so its ready for next cycle
+
+    # increment buf_count only while it is still below 8
+    la    $t4, buf_count
+    lw    $t5, 0($t4)              # grab the current count from memmory
+    slti  $t6, $t5, 8              # check if count < 8 
+    beq   $t6, $zero, pos_done     # skip increment
+    addi  $t5, $t5, 1
+    sw    $t5, 0($t4)              # save the updated buf_count in main memmory
+pos_done:
+    jr    $ra
 
 # ------------------------------------------------------------
 # compute_o2_avg
