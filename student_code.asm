@@ -46,7 +46,7 @@ print_status
 # push_o2_sample
 # Input  $a0 = new O2 byte
 # Output none
-# Description maintains a circular biffer of the last 8 oxygen readings
+# Description: a collee function that maintains a circular biffer of the last 8 oxygen readings
 # ------------------------------------------------------------
 push_o2_sample:
     # store the new sample
@@ -76,8 +76,38 @@ pos_done:
 # compute_o2_avg
 # Input  none
 # Output $v0 = average, or -1 if buffer not full
-# Description TODO
+# Description: a colle function that checks if we have enough data, sum it up, and find the average without using division
 # ------------------------------------------------------------
-compute_o2_avg
-    # TODO
-    jr $ra
+compute_o2_avg:
+    # the gatekeeper
+    la    $t0, buf_count
+    lw    $t1, 0($t0)              # get the current count from main memmory
+    slti  $t2, $t1, 8              # check if count < 8
+    beq   $t2, $zero, coa_sum      # jump to increment
+    li    $v0, -1                  # not enough data, return -1 in $v0
+    jr    $ra
+
+coa_sum:
+    # the unrolled load, load all 8 bytes from the circular buffer
+    la    $t0, o2_buf
+    lbu   $t1, 0($t0)              # adding a offset to the base address to not change the adress pointer
+    lbu   $t2, 1($t0)             
+    lbu   $t3, 2($t0)            
+    lbu   $t4, 3($t0)            
+    lbu   $t5, 4($t0)           
+    lbu   $t6, 5($t0)              
+    lbu   $t7, 6($t0)             
+    lbu   $t8, 7($t0)              
+
+    # the casading sum, sum all 8 values 
+    add   $v0, $t1, $t2
+    add   $v0, $v0, $t3
+    add   $v0, $v0, $t4
+    add   $v0, $v0, $t5
+    add   $v0, $v0, $t6
+    add   $v0, $v0, $t7
+    add   $v0, $v0, $t8            # now holds the total sum, 8 bit unsigned = 255 * 8 = 2048 and mips register holds 32 bits so no overflow
+
+    # integer divide by 8 using logical right shift 
+    srl   $v0, $v0, 3              # using srl pushes all the bits 3 spots to the right and fills the left most empty spots with zeros. basiclly floor(sum / 2^3) = 8 sample average
+    jr    $ra
