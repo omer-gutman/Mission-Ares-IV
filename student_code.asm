@@ -24,6 +24,34 @@ o2_buf:    .byte 0:8          # 8-byte circular buffer
 buf_idx:   .word 0
 buf_count: .word 0
 
+# --- Data section -  string literals for panel output -------------------------------------------
+str_newline:    .asciiz "\n"
+str_header:     .asciiz "ARES IV HABITAT STATUS\n"
+
+# sensor labels each is 11 chars wide so ": " aligns
+str_o2_lbl:     .asciiz "O2         : "
+str_press_lbl:  .asciiz "Pressure   : "
+str_temp_lbl:   .asciiz "Temp       : "
+str_rad_lbl:    .asciiz "Radiation  : "
+str_alarm_lbl:  .asciiz "ALARM      : "
+str_evac_lbl:   .asciiz "EVACUATE   : "
+str_log_lbl:    .asciiz "LOG        : "
+str_o2avg_lbl:  .asciiz "O2 avg (8) : "
+
+# status / value strings
+str_ok:         .asciiz "[OK]\n"       # no leading spaces print_padded addes them
+str_fault:      .asciiz "[FAULT]\n"
+str_yes:        .asciiz "YES\n"
+str_no:         .asciiz "NO\n"
+str_not_enough: .asciiz "not enough data\n"
+str_event_rec:  .asciiz "event recorded\n"
+str_evac_msg:   .asciiz "EVACUATE -- CREW TO ESCAPE PODS\n"
+
+# trailing space pads used by print_padded to right fill the value column
+str_2sp:        .asciiz "  "
+str_3sp:        .asciiz "   "
+str_4sp:        .asciiz "    "
+
 # --- Text section -------------------------------------------
 .text
 .globl main
@@ -36,11 +64,255 @@ main
 # print_status
 # Input  none
 # Output none
-# Description TODO
-# ------------------------------------------------------------
-print_status
-    # TODO
-    jr $ra
+# Description: a calle function by main, reads live data all six MMIO uses lbu for and passes the newly read O2 value ande calculate average and save result
+# --------------------------------------ß----------------------
+print_status:
+    # prologue, addhereing to calling convenyion saves $ra and all $s registers used 
+    addiu $sp, $sp, -32       # makes room on the stack for 8 words (32 bytes)
+    sw    $ra, 28($sp)        # save return address
+    sw    $s6, 24($sp)        # save space for O2 Average
+    sw    $s5, 20($sp)        # save space for ALERT_FLAGS
+    sw    $s4, 16($sp)        # save space for FAULT_FLAGS
+    sw    $s3, 12($sp)        # save space for RADIATION_LEVEL
+    sw    $s2,  8($sp)        # save space for TEMP_LEVEL
+    sw    $s1,  4($sp)        # save space for PRESSURE_LEVEL
+    sw    $s0,  0($sp)        # save space for O2_LEVEL
+
+    # read O2_LEVEL and proccess
+    li    $t0, O2_LEVEL       # load MMIO adress pointer from main memmory
+    lbu   $s0, 0($t0)         # read byte from O2_LEVEL   
+
+    move  $a0, $s0            # put O2 reading into argument register
+    jal   push_o2_sample      # call push_o2_sample function to save to buffer
+
+    jal   compute_o2_avg      # call compute_o2_avg function to calculate average
+    move  $s6, $v0            # save results saflty in $s6
+
+    # read remaining MMIO sensors 
+    li    $t0, PRESSURE_LEVEL
+    lbu   $s1, 0($t0)         # read byte from PRESSURE_LEVEL 
+
+    li    $t0, TEMP_LEVEL
+    lbu   $s2, 0($t0)         # read byte from TEMP_LEVEL     
+
+    li    $t0, RADIATION_LEVEL
+    lbu   $s3, 0($t0)         # read byte from RADIATION_LEVEL
+
+    li    $t0, FAULT_FLAGS
+    lbu   $s4, 0($t0)         # read byte from FAULT_FLAGS    
+
+    li    $t0, ALERT_FLAGS
+    lbu   $s5, 0($t0)         # read byte from ALERT_FLAGS    
+
+    # ===================== HEADER =====================
+    la    $a0, str_newline    # print new line to visually separate each panel
+    li    $v0, 4
+    syscall
+    la    $a0, str_header     # print "ARES IV HABITAT STATUS\n"
+    li    $v0, 4
+    syscall
+
+    # ===================== O2 LINE =====================
+    # FAULT_FLAGS bits 3-0: Fr Ft Fp Fo
+    # Fo (O2 fault) = bit 0
+    la    $a0, str_o2_lbl         # print string "O2         : "
+    li    $v0, 4
+    syscall
+    move  $a0, $s0                 # move raw O2 value into argument register
+    jal   print_padded             # jump to custom padding function
+    andi  $t0, $s4, 0x01           # isolate Fo (bit 0) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00000001 = bit 0 = Fo (O2 fault)
+    bne   $t0, $zero, ps_o2_fault  # if fault ON jump to print fault
+    la    $a0, str_ok              # print string "[OK]\n"
+    li    $v0, 4
+    syscall
+    j     ps_pressure              # jump over to next sensor printing block
+ps_o2_fault:
+    la    $a0, str_fault           # print string "[FAULT]\n"
+    li    $v0, 4
+    syscall
+
+    # ===================== PRESSURE LINE =====================
+    # Fp (Pressure fault) = bit 1
+ps_pressure:
+    la    $a0, str_press_lbl       # print string "Pressure   : "
+    li    $v0, 4
+    syscall
+    move  $a0, $s1                 # move raw pressure value into argument register
+    jal   print_padded
+    andi  $t0, $s4, 0x02           # isolate Fp (bit 1) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00000010 = bit 1 = Fp (Pressure fault)
+    bne   $t0, $zero, ps_press_fault
+    la    $a0, str_ok
+    li    $v0, 4
+    syscall
+    j     ps_temp                  # jump over to next sensor printing block
+ps_press_fault:
+    la    $a0, str_fault
+    li    $v0, 4
+    syscall
+
+    # ===================== TEMP LINE =====================
+    #   Ft (Temp fault) = bit 2
+ps_temp:
+    la    $a0, str_temp_lbl        # print string "Temp       : "
+    li    $v0, 4
+    syscall
+    move  $a0, $s2                 # move raw temp value into argument register
+    jal   print_padded
+    andi  $t0, $s4, 0x04           # isolate Ft (bit 2) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00000100 = bit 2 = Ft (Temp fault)
+    bne   $t0, $zero, ps_temp_fault
+    la    $a0, str_ok
+    li    $v0, 4
+    syscall
+    j     ps_radiation             # jump over to next sensor printing block
+ps_temp_fault:
+    la    $a0, str_fault
+    li    $v0, 4
+    syscall
+
+    # ===================== RADIATION LINE =====================
+    #   Fr (Radiation fault) = bit 3
+ps_radiation:
+    la    $a0, str_rad_lbl         # print string "Radiation  : "
+    li    $v0, 4
+    syscall
+    move  $a0, $s3                 # move raw radiation value into argument register
+    jal   print_padded          
+    andi  $t0, $s4, 0x08           # isolate Fr (bit 3) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00001000 = bit 3 = Fr (Radiation fault)
+    bne   $t0, $zero, ps_rad_fault
+    la    $a0, str_ok
+    li    $v0, 4
+    syscall
+    j     ps_alarm
+ps_rad_fault:
+    la    $a0, str_fault           # jump over to alert printing block
+    li    $v0, 4
+    syscall
+
+    # ===================== ALARM LINE =====================
+    # ALERT_FLAGS bits 2-0: L E A
+    # A (Alarm) = bit 0
+ps_alarm:
+    la    $a0, str_alarm_lbl      # print string "ALARM      : "
+    li    $v0, 4
+    syscall
+    andi  $t0, $s5, 0x01           # isolate A (bit 0) from ALERT_FLAGS using bitwise AND immediate, ALERT_FLAGS AND 00000001 = bit 0 = A (Alarm)
+    beq   $t0, $zero, ps_alarm_no  # if alert OFF jump to print no
+    la    $a0, str_yes             # print string "YES\n"
+    li    $v0, 4
+    syscall
+    la    $a0, str_event_rec       # extra message whenever alarm is active
+    li    $v0, 4
+    syscall
+    j     ps_evacuate_lbl          # jump over to next alert printing block
+ps_alarm_no:
+    la    $a0, str_no              # print string "NO\n"
+    li    $v0, 4
+    syscall
+
+    # ===================== EVACUATE LINE =====================
+    #   E (Evacuate) = bit 1
+ps_evacuate_lbl:
+    la    $a0, str_evac_lbl        # print string "EVACUATE   : "
+    li    $v0, 4
+    syscall
+    andi  $t0, $s5, 0x02           # isolate E (bit 1) from ALERT_FLAGS using bitwise AND immediate, ALERT_FLAGS AND 00000010 = bit 1 = E (Evacuate)
+    beq   $t0, $zero, ps_evac_no
+    la    $a0, str_yes
+    li    $v0, 4
+    syscall
+    j     ps_log                   # jump over to next alert printing block
+ps_evac_no:
+    la    $a0, str_no
+    li    $v0, 4
+    syscall
+
+    # ===================== LOG LINE =====================
+    #   L (Log) = bit 2
+ps_log:
+    la    $a0, str_log_lbl         print string "LOG        : "
+    li    $v0, 4
+    syscall
+    andi  $t0, $s5, 0x04           # isolate L (bit 2) from ALERT_FLAGS using bitwise AND immediate, ALERT_FLAGS AND 00000100 = bit 2 = L (Log)
+    beq   $t0, $zero, ps_log_no
+    la    $a0, str_yes
+    li    $v0, 4
+    syscall
+    j     ps_o2avg                 # jump over to O2 average printing block
+ps_log_no:
+    la    $a0, str_no
+    li    $v0, 4
+    syscall
+
+    # ===================== O2 AVG LINE =====================
+ps_o2avg:
+    la    $a0, str_o2avg_lbl       # print string "O2 avg (8) : "
+    li    $v0, 4
+    syscall
+    li    $t0, -1                  # check if average is NOT -1, if so jump to print it
+    bne   $s6, $t0, ps_avg_num     
+    la    $a0, str_not_enough      # print string "not enough data\n"
+    li    $v0, 4
+    syscall
+    j     ps_post_panel            # jump over to post panel printing block
+ps_avg_num:
+    move  $a0, $s6                 
+    li    $v0, 1
+    syscall                        # print integer average
+    la    $a0, str_newline         # print newline
+    li    $v0, 4
+    syscall
+
+    # ===================== POST-PANEL =====================
+    # if EVACUATE bit is set, print the emergency message after the panel
+ps_post_panel:
+    andi  $t0, $s5, 0x02           # re check E (bit 1) in ALERT_FLAGS
+    beq   $t0, $zero, ps_done      # if 0 skip to the end
+    la    $a0, str_evac_msg        # print string "EVACUATE -- CREW TO ESCAPE PODS\n"
+    li    $v0, 4
+    syscall
+
+ps_done:
+    # epilogue restore all saved registers
+    lw    $s0,  0($sp)
+    lw    $s1,  4($sp)
+    lw    $s2,  8($sp)
+    lw    $s3, 12($sp)
+    lw    $s4, 16($sp)
+    lw    $s5, 20($sp)
+    lw    $s6, 24($sp)
+    lw    $ra, 28($sp)
+    addiu $sp, $sp, 32
+    jr    $ra
+
+
+print_padded:
+    move  $t9, $a0                 # save a copy of the sensor value
+    li    $v0, 1
+    syscall                        # print the integer
+
+    # Decide how many trailing spaces are needed
+    li    $t0, 100
+    slt   $t1, $t9, $t0            # 3 digit check
+    beq   $t1, $zero, pp_2sp     
+    li    $t0, 10
+    slt   $t1, $t9, $t0            # 2 digit check
+    beq   $t1, $zero, pp_3sp       
+    la    $a0, str_4sp             # 1 digit, print a string of 4 spces ("    ")
+    li    $v0, 4
+    syscall
+    jr    $ra
+pp_3sp:
+    la    $a0, str_3sp             # print a string of 3 spaces ("   ")
+    li    $v0, 4
+    syscall
+    jr    $ra
+pp_2sp:
+    la    $a0, str_2sp             # print a string of 2 spaces ("  ")
+    li    $v0, 4
+    syscall
+    jr    $ra
+
+
 
 # ------------------------------------------------------------
 # push_o2_sample
