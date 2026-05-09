@@ -26,7 +26,9 @@ buf_count: .word 0
 
 # --- Data section -  string literals for panel output -------------------------------------------
 str_newline:    .asciiz "\n"
-str_header:     .asciiz "ARES IV HABITAT STATUS\n"
+str_header:     .asciiz "ARES IV -- HABITAT STATUS\n"
+str_eq:         .asciiz "========================================\n"
+str_dash:       .asciiz "----------------------------------------\n"
 
 # sensor labels each is 11 chars wide so ": " aligns
 str_o2_lbl:     .asciiz "O2         : "
@@ -55,7 +57,7 @@ str_4sp:        .asciiz "    "
 # --- Text section -------------------------------------------
 .text
 .globl main
-main
+main:
     jal update_sensors   # advance stub to next reading
     jal print_status     # redraw crew display
     j   main             # poll forever
@@ -64,8 +66,12 @@ main
 # print_status
 # Input  none
 # Output none
-# Description: a calle function by main, reads live data all six MMIO uses lbu for and passes the newly read O2 value ande calculate average and save result
-# --------------------------------------ß----------------------
+# Description: 
+#   Reads all MMIO sensors and updates the O2 buffer. 
+#   Prints the formatted status panel to the console, 
+#   checking bit flags to show faults and alerts. 
+#   Also prints an evacuate warning if needed.
+# ------------------------------------------------------------
 print_status:
     # prologue, addhereing to calling convenyion saves $ra and all $s registers used 
     addiu $sp, $sp, -32       # makes room on the stack for 8 words (32 bytes)
@@ -108,7 +114,13 @@ print_status:
     la    $a0, str_newline    # print new line to visually separate each panel
     li    $v0, 4
     syscall
+    la    $a0, str_eq         # Print top ======
+    li    $v0, 4
+    syscall
     la    $a0, str_header     # print "ARES IV HABITAT STATUS\n"
+    li    $v0, 4
+    syscall
+    la    $a0, str_eq         # Print bottom ======
     li    $v0, 4
     syscall
 
@@ -120,7 +132,7 @@ print_status:
     syscall
     move  $a0, $s0                 # move raw O2 value into argument register
     jal   print_padded             # jump to custom padding function
-    andi  $t0, $s4, 0x01           # isolate Fo (bit 0) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00000001 = bit 0 = Fo (O2 fault)
+    andi  $t0, $s4, 0x01           # isolate Fo (O2 fault) bit
     bne   $t0, $zero, ps_o2_fault  # if fault ON jump to print fault
     la    $a0, str_ok              # print string "[OK]\n"
     li    $v0, 4
@@ -139,7 +151,7 @@ ps_pressure:
     syscall
     move  $a0, $s1                 # move raw pressure value into argument register
     jal   print_padded
-    andi  $t0, $s4, 0x02           # isolate Fp (bit 1) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00000010 = bit 1 = Fp (Pressure fault)
+    andi  $t0, $s4, 0x02           # isolate Fp (Pressure fault) bit
     bne   $t0, $zero, ps_press_fault
     la    $a0, str_ok
     li    $v0, 4
@@ -158,7 +170,7 @@ ps_temp:
     syscall
     move  $a0, $s2                 # move raw temp value into argument register
     jal   print_padded
-    andi  $t0, $s4, 0x04           # isolate Ft (bit 2) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00000100 = bit 2 = Ft (Temp fault)
+    andi  $t0, $s4, 0x04           # isolate Ft (Temp fault) bit
     bne   $t0, $zero, ps_temp_fault
     la    $a0, str_ok
     li    $v0, 4
@@ -177,7 +189,7 @@ ps_radiation:
     syscall
     move  $a0, $s3                 # move raw radiation value into argument register
     jal   print_padded          
-    andi  $t0, $s4, 0x08           # isolate Fr (bit 3) from FAULT_FLAGS using bitwise AND immediate, FAULT_FLAGS AND 00001000 = bit 3 = Fr (Radiation fault)
+    andi  $t0, $s4, 0x08           # isolate Fr (Radiation fault) bit
     bne   $t0, $zero, ps_rad_fault
     la    $a0, str_ok
     li    $v0, 4
@@ -192,10 +204,13 @@ ps_rad_fault:
     # ALERT_FLAGS bits 2-0: L E A
     # A (Alarm) = bit 0
 ps_alarm:
+    la    $a0, str_dash            # Print mid --------
+    li    $v0, 4
+    syscall
     la    $a0, str_alarm_lbl      # print string "ALARM      : "
     li    $v0, 4
     syscall
-    andi  $t0, $s5, 0x01           # isolate A (bit 0) from ALERT_FLAGS using bitwise AND immediate, ALERT_FLAGS AND 00000001 = bit 0 = A (Alarm)
+    andi  $t0, $s5, 0x01           # isolate A (Alarm) bit
     beq   $t0, $zero, ps_alarm_no  # if alert OFF jump to print no
     la    $a0, str_yes             # print string "YES\n"
     li    $v0, 4
@@ -215,7 +230,7 @@ ps_evacuate_lbl:
     la    $a0, str_evac_lbl        # print string "EVACUATE   : "
     li    $v0, 4
     syscall
-    andi  $t0, $s5, 0x02           # isolate E (bit 1) from ALERT_FLAGS using bitwise AND immediate, ALERT_FLAGS AND 00000010 = bit 1 = E (Evacuate)
+    andi  $t0, $s5, 0x02           # isolate E (Evacuate) bit
     beq   $t0, $zero, ps_evac_no
     la    $a0, str_yes
     li    $v0, 4
@@ -229,10 +244,10 @@ ps_evac_no:
     # ===================== LOG LINE =====================
     #   L (Log) = bit 2
 ps_log:
-    la    $a0, str_log_lbl         print string "LOG        : "
+    la    $a0, str_log_lbl         # print string "LOG        : "
     li    $v0, 4
     syscall
-    andi  $t0, $s5, 0x04           # isolate L (bit 2) from ALERT_FLAGS using bitwise AND immediate, ALERT_FLAGS AND 00000100 = bit 2 = L (Log)
+    andi  $t0, $s5, 0x04           # isolate L (Log) bit
     beq   $t0, $zero, ps_log_no
     la    $a0, str_yes
     li    $v0, 4
@@ -240,6 +255,10 @@ ps_log:
     j     ps_o2avg                 # jump over to O2 average printing block
 ps_log_no:
     la    $a0, str_no
+    li    $v0, 4
+    syscall
+
+    la    $a0, str_dash            # Print lower --------
     li    $v0, 4
     syscall
 
@@ -253,12 +272,16 @@ ps_o2avg:
     la    $a0, str_not_enough      # print string "not enough data\n"
     li    $v0, 4
     syscall
-    j     ps_post_panel            # jump over to post panel printing block
+    j     ps_print_bottom          # jump over to post panel printing block 
 ps_avg_num:
     move  $a0, $s6                 
     li    $v0, 1
     syscall                        # print integer average
     la    $a0, str_newline         # print newline
+    li    $v0, 4
+    syscall
+ps_print_bottom:
+    la    $a0, str_eq              # Print very bottom ======
     li    $v0, 4
     syscall
 
@@ -318,7 +341,10 @@ pp_2sp:
 # push_o2_sample
 # Input  $a0 = new O2 byte
 # Output none
-# Description: a collee function that maintains a circular biffer of the last 8 oxygen readings
+# Description: 
+#   Saves a new O2 reading into the circular buffer. 
+#   Updates the index and wraps it around using modulo. 
+#   Also increases the sample count up to a max of 8.
 # ------------------------------------------------------------
 push_o2_sample:
     # store the new sample
@@ -331,7 +357,7 @@ push_o2_sample:
 
     # advancing the index
     addi  $t1, $t1, 1              # advance our current index
-    andi  $t1, $t1, 0x07           # bitwise AND immediate, if the index reaches 8 we want to wrap back to 0. 1000 AND 0111 = 0000
+    andi  $t1, $t1, 0x07           # modulo 8 wrap around for index
     sw    $t1, 0($t0)              # update the current index to buf_idx spot in main memmory so its ready for next cycle
 
     # increment buf_count only while it is still below 8
@@ -348,7 +374,10 @@ pos_done:
 # compute_o2_avg
 # Input  none
 # Output $v0 = average, or -1 if buffer not full
-# Description: a colle function that checks if we have enough data, sum it up, and find the average without using division
+# Description:
+#   Returns -1 if we don't have 8 samples yet. 
+#   If the buffer is full, it sums up the 8 bytes 
+#   and divides by 8 using a bit shift (srl) to get the average.
 # ------------------------------------------------------------
 compute_o2_avg:
     # the gatekeeper
@@ -378,8 +407,8 @@ coa_sum:
     add   $v0, $v0, $t5
     add   $v0, $v0, $t6
     add   $v0, $v0, $t7
-    add   $v0, $v0, $t8            # now holds the total sum, 8 bit unsigned = 255 * 8 = 2048 and mips register holds 32 bits so no overflow
+    add   $v0, $v0, $t8            # now holds the total sum (max 2040, so no overflow risk in 32 bit register)
 
     # integer divide by 8 using logical right shift 
-    srl   $v0, $v0, 3              # using srl pushes all the bits 3 spots to the right and fills the left most empty spots with zeros. basiclly floor(sum / 2^3) = 8 sample average
+    srl   $v0, $v0, 3              # divide sum by 8 (shift right 3) to get floor average
     jr    $ra
