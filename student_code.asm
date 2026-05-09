@@ -258,12 +258,11 @@ ps_log_no:
     li    $v0, 4
     syscall
 
+    # ===================== O2 AVG LINE =====================
+ps_o2avg:
     la    $a0, str_dash            # Print lower --------
     li    $v0, 4
     syscall
-
-    # ===================== O2 AVG LINE =====================
-ps_o2avg:
     la    $a0, str_o2avg_lbl       # print string "O2 avg (8) : "
     li    $v0, 4
     syscall
